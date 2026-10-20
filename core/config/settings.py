@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     google_cloud_project: str = ''
     max_tool_steps: int = 3
     context_max_chars: int = 4000
-    database_url: str = 'sqlite:///./mimir.db'
+    database_url: str = 'sqlite:///./mimir_v2.db'
     owner_id: str = 'owner'
     local_api_key: str = ''
     telegram_bot_token: str = ''

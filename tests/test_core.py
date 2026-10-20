@@ -2,8 +2,13 @@ from core.context.manager import Conversation, ContextManager
 from core.memory.base import InMemoryStore, MemoryItem, MemoryCategory
 from core.tools.registry import ToolRegistry
 from core.tools.base import ToolRequest
-from core.tools.mocks import MockGmailSearch, MockFinanceRegister, MockSendEmail
-from core.tools.domain_tools import CalendarGetEvents, CalendarCreateEvent, CalendarUpdateEvent, CalendarDeleteEvent, FinanceTotal, TasksAdd, TasksList
+from core.tools.mocks import MockGmailSearch, MockSendEmail
+from core.tools.domain_tools import (
+    CalendarGetEvents, CalendarCreateEvent, CalendarUpdateEvent, CalendarDeleteEvent,
+    TasksAdd, TasksList,
+    FinanceRegisterExpense, FinanceRegisterIncome, FinanceGetSummary, FinanceGetExpenses,
+    FinanceGetIncomes, FinanceDeleteExpense, FinanceDeleteIncome, FinanceGetCategories,
+)
 from core.tools.executor import ToolExecutor
 from core.policy.base import HeimdallBasicPolicy
 from core.llm.mock_provider import MockProvider
@@ -11,16 +16,23 @@ from core.orchestration.orchestrator import MimirOrchestrator
 from modules.productivity.calendar.service import MockCalendarService
 from modules.productivity.tasks.service import MockTaskService
 from modules.finance.service import FinanceService
-import tempfile, os
+import tempfile, os, uuid
 
 def make_core():
     reg = ToolRegistry()
-    for t in (MockGmailSearch(), MockFinanceRegister(), MockSendEmail()):
+    for t in (MockGmailSearch(), MockSendEmail()):
         reg.register(t)
     cal_svc = MockCalendarService()
     task_svc = MockTaskService()
-    fin_svc = FinanceService('sqlite:///' + os.path.join(tempfile.gettempdir(), 'mimir_test.db'))
-    for t in (CalendarGetEvents(cal_svc), CalendarCreateEvent(cal_svc), CalendarUpdateEvent(cal_svc), CalendarDeleteEvent(cal_svc), TasksAdd(task_svc), TasksList(task_svc), FinanceTotal(fin_svc)):
+    db_file = os.path.join(tempfile.gettempdir(), f'mimir_test_{uuid.uuid4().hex[:8]}.db')
+    fin_svc = FinanceService('sqlite:///' + db_file)
+    for t in (
+        CalendarGetEvents(cal_svc), CalendarCreateEvent(cal_svc), CalendarUpdateEvent(cal_svc), CalendarDeleteEvent(cal_svc),
+        TasksAdd(task_svc), TasksList(task_svc),
+        FinanceRegisterExpense(fin_svc), FinanceRegisterIncome(fin_svc), FinanceGetSummary(fin_svc),
+        FinanceGetExpenses(fin_svc), FinanceGetIncomes(fin_svc), FinanceDeleteExpense(fin_svc),
+        FinanceDeleteIncome(fin_svc), FinanceGetCategories(fin_svc),
+    ):
         reg.register(t)
     pol = HeimdallBasicPolicy()
     ex = ToolExecutor(reg, pol)
@@ -53,7 +65,6 @@ def test_confirmation_reject_does_not_execute():
     reg, ex, _, _, cal_svc, _, _ = make_core()
     r = ex.execute(ToolRequest(tool="calendar_create_event", arguments={"title": "No crear", "start": "2026-10-01T10:00:00"}))
     cid = r.confirmation_id
-    # Simply don't call approve_confirmation; event should not exist
     evs = cal_svc.list_events()
     assert not any(e['title'] == 'No crear' for e in evs)
 
@@ -84,11 +95,59 @@ def test_orchestrator_create_event_needs_confirmation():
     assert out['confirmation']['tool'] == 'calendar_create_event'
     assert out['confirmation']['args']['title'].find('Prueba Mimir') >= 0
 
-def test_finance_deterministic():
+def test_finance_register_expense_deterministic():
     _, ex, _, _, _, _, fin_svc = make_core()
-    r1 = ex.execute(ToolRequest(tool="finance_register_expense", arguments={"amount": 5, "category": "food"}))
-    r2 = ex.execute(ToolRequest(tool="finance_register_expense", arguments={"amount": 7, "category": "food"}))
-    assert r2.data["total"] == 12.0
+    r1 = ex.execute(ToolRequest(tool="finance_register_expense", arguments={"amount": 5.0, "category": "food"}))
+    assert r1.ok
+    r2 = ex.execute(ToolRequest(tool="finance_register_expense", arguments={"amount": 7.0, "category": "food"}))
+    assert r2.ok
+    summary = fin_svc.summary()
+    assert summary['total_expense'] == 12.0
+
+def test_finance_register_income():
+    _, ex, _, _, _, _, fin_svc = make_core()
+    r = ex.execute(ToolRequest(tool="finance_register_income", arguments={"amount": 100.0, "category": "salary"}))
+    assert r.ok
+    summary = fin_svc.summary()
+    assert summary['total_income'] == 100.0
+
+def test_finance_get_summary():
+    _, ex, _, _, _, _, fin_svc = make_core()
+    ex.execute(ToolRequest(tool="finance_register_expense", arguments={"amount": 10.0, "category": "food"}))
+    ex.execute(ToolRequest(tool="finance_register_income", arguments={"amount": 50.0, "category": "salary"}))
+    r = ex.execute(ToolRequest(tool="finance_get_summary", arguments={}))
+    assert r.ok
+    assert r.data['total_income'] == 50.0
+    assert r.data['total_expense'] == 10.0
+    assert r.data['balance'] == 40.0
+
+def test_finance_delete_expense_requires_confirmation():
+    reg, ex, _, _, _, _, fin_svc = make_core()
+    r1 = ex.execute(ToolRequest(tool="finance_register_expense", arguments={"amount": 5.0, "category": "food"}))
+    assert r1.ok
+    expense_id = r1.data['id']
+    r2 = ex.execute(ToolRequest(tool="finance_delete_expense", arguments={"expense_id": expense_id}))
+    assert r2.confirmation_required
+    assert r2.confirmation_id != ''
+
+def test_finance_delete_expense_approved():
+    reg, ex, _, _, _, _, fin_svc = make_core()
+    r1 = ex.execute(ToolRequest(tool="finance_register_expense", arguments={"amount": 5.0, "category": "food"}))
+    assert r1.ok
+    expense_id = r1.data['id']
+    r2 = ex.execute(ToolRequest(tool="finance_delete_expense", arguments={"expense_id": expense_id}))
+    cid = r2.confirmation_id
+    result = ex.approve_confirmation(cid)
+    assert result.ok
+    assert result.data['deleted'] is True
+    summary = fin_svc.summary()
+    assert summary['total_expense'] == 0.0
+
+def test_finance_categories():
+    _, _, _, _, _, _, fin_svc = make_core()
+    cats = fin_svc.list_categories(type_filter='expense')
+    assert len(cats) > 0
+    assert any(c['name'] == 'Alimentación' for c in cats)
 
 def test_unknown_tool_fail_closed():
     _, ex, _, _, _, _, _ = make_core()
@@ -109,19 +168,16 @@ def test_audit_logged_without_secrets():
 
 def test_calendar_update_and_delete_with_confirmation():
     reg, ex, _, _, cal_svc, _, _ = make_core()
-    # Create via direct confirm flow
     r1 = ex.execute(ToolRequest(tool="calendar_create_event", arguments={"title": "Para editar", "start": "2026-10-02T10:00:00"}))
     assert r1.confirmation_required
     ex.approve_confirmation(r1.confirmation_id)
     evs = cal_svc.list_events()
     ev_id = [e for e in evs if e['title'] == 'Para editar'][0]['event_id']
-    # Update
     r2 = ex.execute(ToolRequest(tool="calendar_update_event", arguments={"event_id": ev_id, "title": "Editado", "start": "2026-10-02T11:00:00"}))
     assert r2.confirmation_required
     ex.approve_confirmation(r2.confirmation_id)
     evs = cal_svc.list_events()
     assert any(e['event_id'] == ev_id and e['title'] == 'Editado' for e in evs)
-    # Delete
     r3 = ex.execute(ToolRequest(tool="calendar_delete_event", arguments={"event_id": ev_id}))
     assert r3.confirmation_required
     ex.approve_confirmation(r3.confirmation_id)

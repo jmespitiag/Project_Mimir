@@ -11,3 +11,4 @@ build/
 *_token.json
 client_secret*.json
 mimir.db
+mimir_v2.db

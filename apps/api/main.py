@@ -7,8 +7,14 @@ from core.config.settings import Settings
 from core.context.manager import Conversation, ContextManager
 from core.memory.base import InMemoryStore, MemoryItem, MemoryCategory
 from core.tools.registry import ToolRegistry
-from core.tools.mocks import MockGmailSearch, MockFinanceRegister, MockSendEmail
-from core.tools.domain_tools import CalendarCreateEvent, CalendarGetEvents, CalendarUpdateEvent, CalendarDeleteEvent, TasksAdd, TasksList, FinanceTotal
+from core.tools.mocks import MockGmailSearch, MockSendEmail
+from core.tools.domain_tools import (
+    CalendarCreateEvent, CalendarGetEvents, CalendarUpdateEvent, CalendarDeleteEvent,
+    TasksAdd, TasksList,
+    FinanceRegisterExpense, FinanceRegisterIncome, FinanceGetSummary, FinanceGetExpenses,
+    FinanceGetIncomes, FinanceDeleteExpense, FinanceDeleteIncome, FinanceGetCategories,
+    FinanceImportExcel, FinanceExportCSV,
+)
 from core.tools.executor import ToolExecutor
 from core.policy.base import HeimdallBasicPolicy
 from core.llm.mock_provider import MockProvider
@@ -30,7 +36,7 @@ settings = Settings()
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
 log = logging.getLogger('mimir')
 registry = ToolRegistry()
-for t in (MockGmailSearch(), MockFinanceRegister(), MockSendEmail()):
+for t in (MockGmailSearch(), MockSendEmail()):
     registry.register(t)
 cal_svc = None
 try:
@@ -44,7 +50,13 @@ except Exception as e:
 task_svc = MockTaskService()
 fin_svc = FinanceService(settings.database_url)
 bus = EventBus()
-for t in (CalendarGetEvents(cal_svc), CalendarCreateEvent(cal_svc), CalendarUpdateEvent(cal_svc), CalendarDeleteEvent(cal_svc), TasksAdd(task_svc), TasksList(task_svc), FinanceTotal(fin_svc)):
+for t in (
+    CalendarGetEvents(cal_svc), CalendarCreateEvent(cal_svc), CalendarUpdateEvent(cal_svc), CalendarDeleteEvent(cal_svc),
+    TasksAdd(task_svc), TasksList(task_svc),
+    FinanceRegisterExpense(fin_svc), FinanceRegisterIncome(fin_svc), FinanceGetSummary(fin_svc),
+    FinanceGetExpenses(fin_svc), FinanceGetIncomes(fin_svc), FinanceDeleteExpense(fin_svc),
+    FinanceDeleteIncome(fin_svc), FinanceGetCategories(fin_svc), FinanceImportExcel(fin_svc), FinanceExportCSV(fin_svc),
+):
     registry.register(t)
 policy = HeimdallBasicPolicy(owner_id=settings.owner_id)
 executor = ToolExecutor(registry, policy)
@@ -54,7 +66,6 @@ ctx = ContextManager(max_chars=settings.context_max_chars)
 def _llm():
     return GeminiProvider(model=settings.gemini_model) if settings.llm_provider == 'gemini' else MockProvider()
 orch = MimirOrchestrator(_llm(), registry, executor, memory, ctx, max_steps=settings.max_tool_steps)
-# Proveedor de mensajeria: Telegram real si tiene token, sino mock
 msg_provider = MockMessagingProvider()
 tp = TelegramProvider(token=settings.telegram_bot_token)
 if tp.is_configured():
@@ -67,7 +78,7 @@ def get_conv(sid: str) -> Conversation:
     if sid not in sessions:
         sessions[sid] = Conversation()
     return sessions[sid]
-app = FastAPI(title='Mimir Core', version='0.4.0')
+app = FastAPI(title='Mimir Core', version='0.5.0')
 class ChatIn(BaseModel):
     message: str
     session_id: str = 'default'
@@ -75,17 +86,26 @@ class ExpenseIn(BaseModel):
     amount: float
     category: str = 'general'
     note: str = ''
+    date: str | None = None
+class IncomeIn(BaseModel):
+    amount: float
+    category: str = 'general'
+    note: str = ''
+    date: str | None = None
 class TaskIn(BaseModel):
     title: str
     due: str = ''
 class WebhookIn(BaseModel):
     update_id: int = 0
     message: dict = {}
+class ImportExcelIn(BaseModel):
+    file_path: str
+    type: str = 'expense'
 def is_google_calendar() -> bool:
     return GoogleCalendarAdapter is not None and isinstance(cal_svc, GoogleCalendarAdapter)
 @app.get('/health')
 def health():
-    return {'status': 'ok', 'core': 'mimir-0.4.0', 'tools': registry.names(), 'provider': _llm().name, 'db': settings.database_url.split('://')[0], 'calendar': 'google' if is_google_calendar() else 'mock', 'messaging': msg_provider.name}
+    return {'status': 'ok', 'core': 'mimir-0.5.0', 'tools': registry.names(), 'provider': _llm().name, 'db': settings.database_url.split('://')[0], 'calendar': 'google' if is_google_calendar() else 'mock', 'messaging': msg_provider.name, 'finance': 'draupnir'}
 @app.get('/tools')
 def tools():
     return {'tools': registry.definitions_for_llm()}
@@ -133,10 +153,6 @@ def confirm(confirmation_id: str):
     return {'ok': result.ok, 'data': result.data, 'error': result.error}
 @app.post('/telegram/webhook')
 def telegram_webhook(inp: WebhookIn):
-    """Webhook para Telegram Bot API.
-    Recibe update de Telegram, normaliza el mensaje, lo procesa en el orchestrator
-    y devuelve la respuesta para enviarla de vuelta por Telegram.
-    """
     try:
         incoming = msg_provider.receive(inp.model_dump())
     except Exception as e:
@@ -172,22 +188,50 @@ def telegram_status():
     }
 @app.post('/telegram/set-webhook')
 def set_telegram_webhook(url: str):
-    """Configura el webhook de Telegram. Llama con tu URL pública (ej. https://tu-app.run.app/telegram/webhook)."""
     if msg_provider.name != 'telegram':
         return {'ok': False, 'error': 'Telegram no configurado'}
     result = msg_provider.set_webhook(url)
     return {'ok': result, 'url': url}
+# ── Draupnir: Finanzas ────────────────────────────────────────────────
 @app.post('/finance/expenses')
 def add_expense(inp: ExpenseIn):
-    d = fin_svc.add_expense(inp.amount, inp.category, inp.note)
+    d = fin_svc.add_expense(inp.amount, inp.category, inp.note, inp.date)
     bus.publish('finance.expense_added', d)
+    return d
+@app.post('/finance/incomes')
+def add_income(inp: IncomeIn):
+    d = fin_svc.add_income(inp.amount, inp.category, inp.note, inp.date)
+    bus.publish('finance.income_added', d)
     return d
 @app.get('/finance/summary')
 def finance_summary():
-    return {'total': fin_svc.total(), 'by_category': fin_svc.totals_by_category()}
-@app.get('/finance/export')
-def finance_export():
-    return {'csv': fin_svc.export_csv()}
+    return fin_svc.summary()
+@app.get('/finance/expenses')
+def finance_expenses(limit: int = 50, category: str | None = None, start: str | None = None, end: str | None = None):
+    return fin_svc.list_expenses(limit=limit, category=category, start=start, end=end)
+@app.get('/finance/incomes')
+def finance_incomes(limit: int = 50, category: str | None = None, start: str | None = None, end: str | None = None):
+    return fin_svc.list_incomes(limit=limit, category=category, start=start, end=end)
+@app.get('/finance/categories')
+def finance_categories(type: str | None = None):
+    return fin_svc.list_categories(type_filter=type)
+@app.delete('/finance/expenses/{expense_id}')
+def finance_delete_expense(expense_id: int):
+    return fin_svc.delete_expense(expense_id)
+@app.delete('/finance/incomes/{income_id}')
+def finance_delete_income(income_id: int):
+    return fin_svc.delete_income(income_id)
+@app.get('/finance/export/csv')
+def finance_export_csv(start: str | None = None, end: str | None = None):
+    return {
+        'expenses': fin_svc.export_expenses_csv(start, end),
+        'incomes': fin_svc.export_incomes_csv(start, end),
+        'summary': fin_svc.export_summary_csv(start, end),
+    }
+@app.post('/finance/import/excel')
+def finance_import_excel(inp: ImportExcelIn):
+    return fin_svc.import_expenses_from_excel(inp.file_path) if inp.type == 'expense' else fin_svc.import_incomes_from_excel(inp.file_path)
+# ── Tareas ──────────────────────────────────────────────────────────────
 @app.post('/tasks')
 def tasks_add(inp: TaskIn):
     return task_svc.add(inp.title, inp.due)
