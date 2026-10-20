@@ -153,8 +153,8 @@ def test_telegram_webhook_mock_flow():
     from fastapi.testclient import TestClient
     from apps.api.main import app
     c = TestClient(app)
-    payload = {'message': {'message_id': 1, 'from': {'id': 123456789}, 'chat': {'id': 123456789}, 'text': 'hola mimir'}}
-    r = c.post('/telegram/webhook', json={'payload': payload})
+    payload = {'update_id': 1, 'message': {'message_id': 1, 'from': {'id': 123456789}, 'chat': {'id': 123456789}, 'text': 'hola mimir'}}
+    r = c.post('/telegram/webhook', json=payload)
     assert r.status_code == 200
     data = r.json()
     assert data['status'] == 'ok'

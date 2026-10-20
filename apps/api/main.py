@@ -79,7 +79,8 @@ class TaskIn(BaseModel):
     title: str
     due: str = ''
 class WebhookIn(BaseModel):
-    payload: dict
+    update_id: int = 0
+    message: dict = {}
 def is_google_calendar() -> bool:
     return GoogleCalendarAdapter is not None and isinstance(cal_svc, GoogleCalendarAdapter)
 @app.get('/health')
@@ -137,7 +138,7 @@ def telegram_webhook(inp: WebhookIn):
     y devuelve la respuesta para enviarla de vuelta por Telegram.
     """
     try:
-        incoming = msg_provider.receive(inp.payload)
+        incoming = msg_provider.receive(inp.model_dump())
     except Exception as e:
         return {'status': 'error', 'error': 'payload invalido: ' + str(e)}
     conv = get_conv(incoming.from_number)
