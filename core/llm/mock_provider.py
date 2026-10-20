@@ -7,6 +7,9 @@ class MockProvider(LLMProvider):
         if 'UNTRUSTED DATA' in context or 'Continua con estos resultados' in context:
             return LLMResponse(text='He consultado herramientas. Sintetizo con los datos obtenidos.')
         low = context.lower()
+        creation = any(w in low for w in ['crea', 'crear', 'create', 'add', 'agregar'])
+        if ('evento' in low or 'event' in low) and creation:
+            return LLMResponse(text='', tool_requests=[ToolRequest(tool='calendar_create_event', arguments={'title': context[:80], 'start': ''}, reason='usuario pide crear evento')])
         if 'calendario' in low or 'calendar' in low or 'eventos' in low:
             return LLMResponse(text='', tool_requests=[ToolRequest(tool='calendar_get_events', arguments={}, reason='usuario pide calendario')])
         if 'correo' in low or 'email' in low or 'gmail' in low:

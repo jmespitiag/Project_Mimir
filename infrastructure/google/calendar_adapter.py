@@ -5,13 +5,13 @@ from modules.productivity.calendar.service import CalendarService
 from infrastructure.google.oauth import NeedsGoogleAuth
 
 TOKEN_PATH = pathlib.Path('.secrets') / 'calendar_token.json'
-SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
+SCOPES = ['https://www.googleapis.com/auth/calendar.readonly', 'https://www.googleapis.com/auth/calendar.events']
 
 
 class GoogleCalendarAdapter(CalendarService):
-    """Adapter Bifrost -> Google Calendar API (readonly).
-    Lee token OAuth guardado solo en .secrets/calendar_token.json (local, no git).
-    Sin token -> NeedGoogleAuth (fail closed). Nunca escribe en Calendar.
+    """Adapter Bifrost -> Google Calendar API.
+    Lee y escribe eventos. Escritura requiere confirmacion del usuario (HIGH).
+    Token OAuth guardado solo en .secrets/calendar_token.json (local, no git).
     """
 
     def __init__(self) -> None:
@@ -29,6 +29,13 @@ class GoogleCalendarAdapter(CalendarService):
         except Exception as e:
             raise NeedsGoogleAuth('No se pudo cargar credenciales de Calendar: ' + str(e))
 
+    def _event_body(self, title: str, start: str) -> dict:
+        return {
+            'summary': title,
+            'start': {'dateTime': start, 'timeZone': 'UTC'},
+            'end': {'dateTime': start, 'timeZone': 'UTC'},
+        }
+
     def list_events(self, day: str = '') -> list[dict]:
         if self._svc is None:
             raise NeedsGoogleAuth('Calendar no inicializado.')
@@ -41,6 +48,7 @@ class GoogleCalendarAdapter(CalendarService):
         items = evs.get('items', [])
         return [
             {
+                'event_id': e.get('id', ''),
                 'title': e.get('summary', '(sin titulo)'),
                 'start': (e.get('start') or {}).get('dateTime') or (e.get('start') or {}).get('date'),
                 'end': (e.get('end') or {}).get('dateTime') or (e.get('end') or {}).get('date'),
@@ -49,5 +57,29 @@ class GoogleCalendarAdapter(CalendarService):
         ]
 
     def create_event(self, title: str, start: str) -> dict:
-        # Escritura bloqueada deliberadamente en fase readonly. Requiere tu OK explícito antes de activar.
-        raise NotImplementedError('Crear eventos esta bloqueado por politica de confirmacion (HIGH).')
+        if self._svc is None:
+            raise NeedsGoogleAuth('Calendar no inicializado.')
+        created = self._svc.events().insert(calendarId='primary', body=self._event_body(title, start)).execute()
+        return {
+            'event_id': created.get('id', ''),
+            'title': created.get('summary', title),
+            'start': (created.get('start') or {}).get('dateTime') or (created.get('start') or {}).get('date'),
+        }
+
+    def update_event(self, event_id: str, title: str, start: str) -> dict:
+        if self._svc is None:
+            raise NeedsGoogleAuth('Calendar no inicializado.')
+        updated = self._svc.events().update(
+            calendarId='primary', eventId=event_id, body=self._event_body(title, start),
+        ).execute()
+        return {
+            'event_id': updated.get('id', event_id),
+            'title': updated.get('summary', title),
+            'start': (updated.get('start') or {}).get('dateTime') or (updated.get('start') or {}).get('date'),
+        }
+
+    def delete_event(self, event_id: str) -> dict:
+        if self._svc is None:
+            raise NeedsGoogleAuth('Calendar no inicializado.')
+        self._svc.events().delete(calendarId='primary', eventId=event_id).execute()
+        return {'event_id': event_id, 'deleted': True}

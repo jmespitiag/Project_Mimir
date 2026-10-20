@@ -16,6 +16,10 @@ class ToolResult(BaseModel):
     data: Any = None
     error: str = ''
     untrusted: bool = True
+    confirmation_required: bool = False
+    confirmation_id: str = ''
+    confirmation_tool: str = ''
+    confirmation_args: dict[str, Any] = Field(default_factory=dict)
 class Tool(BaseModel):
     name: str
     description: str
