@@ -1,6 +1,7 @@
 import logging
 import pathlib
-from fastapi import FastAPI
+import os
+from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 from core.config.settings import Settings
 from core.context.manager import Conversation, ContextManager
@@ -14,6 +15,9 @@ from core.llm.mock_provider import MockProvider
 from core.llm.gemini_provider import GeminiProvider
 from core.orchestration.orchestrator import MimirOrchestrator
 from core.events.bus import EventBus
+from core.messaging.mock import MockMessagingProvider
+from core.messaging.telegram import TelegramProvider
+from core.messaging.base import IncomingMessage, OutgoingMessage
 try:
     from infrastructure.google.calendar_adapter import GoogleCalendarAdapter
 except Exception:  # noqa
@@ -50,6 +54,14 @@ ctx = ContextManager(max_chars=settings.context_max_chars)
 def _llm():
     return GeminiProvider(model=settings.gemini_model) if settings.llm_provider == 'gemini' else MockProvider()
 orch = MimirOrchestrator(_llm(), registry, executor, memory, ctx, max_steps=settings.max_tool_steps)
+# Proveedor de mensajeria: Telegram real si tiene token, sino mock
+msg_provider = MockMessagingProvider()
+tp = TelegramProvider(token=settings.telegram_bot_token)
+if tp.is_configured():
+    msg_provider = tp
+    log.info('Telegram provider real activado')
+else:
+    log.info('Telegram no configurado (falta TELEGRAM_BOT_TOKEN). Usando mock.')
 sessions: dict[str, Conversation] = {}
 def get_conv(sid: str) -> Conversation:
     if sid not in sessions:
@@ -66,11 +78,14 @@ class ExpenseIn(BaseModel):
 class TaskIn(BaseModel):
     title: str
     due: str = ''
+class WebhookIn(BaseModel):
+    update_id: int = 0
+    message: dict = {}
 def is_google_calendar() -> bool:
     return GoogleCalendarAdapter is not None and isinstance(cal_svc, GoogleCalendarAdapter)
 @app.get('/health')
 def health():
-    return {'status': 'ok', 'core': 'mimir-0.4.0', 'tools': registry.names(), 'provider': _llm().name, 'db': settings.database_url.split('://')[0], 'calendar': 'google' if is_google_calendar() else 'mock'}
+    return {'status': 'ok', 'core': 'mimir-0.4.0', 'tools': registry.names(), 'provider': _llm().name, 'db': settings.database_url.split('://')[0], 'calendar': 'google' if is_google_calendar() else 'mock', 'messaging': msg_provider.name}
 @app.get('/tools')
 def tools():
     return {'tools': registry.definitions_for_llm()}
@@ -107,7 +122,7 @@ def calendar_status():
 def chat(inp: ChatIn):
     log.info('chat sid=%s len=%d', inp.session_id, len(inp.message))
     conv = get_conv(inp.session_id)
-    result = orch.chat(conv, inp.message)
+    result = orch.chat(conv, inp.message, session_id=inp.session_id)
     audit_tail = executor.audit_log[-3:]
     if 'confirmation' in result:
         return {'reply': result['reply'], 'confirmation': result['confirmation'], 'audit': audit_tail}
@@ -116,6 +131,52 @@ def chat(inp: ChatIn):
 def confirm(confirmation_id: str):
     result = executor.approve_confirmation(confirmation_id)
     return {'ok': result.ok, 'data': result.data, 'error': result.error}
+@app.post('/telegram/webhook')
+def telegram_webhook(inp: WebhookIn):
+    """Webhook para Telegram Bot API.
+    Recibe update de Telegram, normaliza el mensaje, lo procesa en el orchestrator
+    y devuelve la respuesta para enviarla de vuelta por Telegram.
+    """
+    try:
+        incoming = msg_provider.receive(inp.model_dump())
+    except Exception as e:
+        return {'status': 'error', 'error': 'payload invalido: ' + str(e)}
+    conv = get_conv(incoming.from_number)
+    result = orch.chat(conv, incoming.text, session_id=incoming.from_number)
+    audit_tail = executor.audit_log[-3:]
+    out_text = result.get('reply', 'Sin respuesta')
+    if 'confirmation' in result:
+        cid = result['confirmation']['id']
+        out_text += '\n\nEsta accion requiere confirmacion. Responde con: confirmar ' + cid
+    sent = False
+    if msg_provider.name == 'telegram':
+        try:
+            sent = msg_provider.send(OutgoingMessage(to_number=incoming.from_number, text=out_text))
+        except Exception as e:
+            log.warning('No se pudo enviar por Telegram: ' + str(e))
+    return {
+        'status': 'ok',
+        'from': incoming.from_number,
+        'message_id': incoming.message_id,
+        'reply': out_text,
+        'sent_via_telegram': sent,
+        'confirmation': result.get('confirmation'),
+        'audit': audit_tail,
+    }
+@app.get('/telegram/status')
+def telegram_status():
+    return {
+        'provider': msg_provider.name,
+        'configured': bool(msg_provider.name == 'telegram' and getattr(msg_provider, 'is_configured', lambda: False)()),
+        'note': 'Telegram mock activo. Para usar Telegram real, configura TELEGRAM_BOT_TOKEN y pon el webhook en /telegram/set-webhook.',
+    }
+@app.post('/telegram/set-webhook')
+def set_telegram_webhook(url: str):
+    """Configura el webhook de Telegram. Llama con tu URL pública (ej. https://tu-app.run.app/telegram/webhook)."""
+    if msg_provider.name != 'telegram':
+        return {'ok': False, 'error': 'Telegram no configurado'}
+    result = msg_provider.set_webhook(url)
+    return {'ok': result, 'url': url}
 @app.post('/finance/expenses')
 def add_expense(inp: ExpenseIn):
     d = fin_svc.add_expense(inp.amount, inp.category, inp.note)

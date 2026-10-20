@@ -14,3 +14,4 @@ class Settings(BaseSettings):
     database_url: str = 'sqlite:///./mimir.db'
     owner_id: str = 'owner'
     local_api_key: str = ''
+    telegram_bot_token: str = ''
