@@ -1,0 +1,19 @@
+# Fase 0: solo Postgres como futuro source of truth (Draupnir).
+# El Core funciona sin Docker; esto prepara Cloud Run / Managed PG.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: mimir
+      POSTGRES_PASSWORD: mimir
+      POSTGRES_DB: mimir
+    ports:
+      - "5432:5432"
+    volumes:
+      - mimir_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mimir"]
+      interval: 10s
+      retries: 5
+volumes:
+  mimir_pg:

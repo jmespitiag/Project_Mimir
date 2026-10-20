@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+!.env.example
+.pytest_cache/
+dist/
+build/
+*.egg-info/
+.secrets/
+*_token.json
+client_secret*.json
+mimir.db
