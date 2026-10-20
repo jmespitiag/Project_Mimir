@@ -64,7 +64,7 @@ memory = InMemoryStore()
 memory.save(MemoryItem(category=MemoryCategory.PROFILE, text='Propietario Roman ecosistema Google'))
 ctx = ContextManager(max_chars=settings.context_max_chars)
 def _llm():
-    return GeminiProvider(model=settings.gemini_model) if settings.llm_provider == 'gemini' else MockProvider()
+    return GeminiProvider(model=settings.gemini_model, api_key=settings.google_api_key) if settings.llm_provider == 'gemini' else MockProvider()
 orch = MimirOrchestrator(_llm(), registry, executor, memory, ctx, max_steps=settings.max_tool_steps)
 msg_provider = MockMessagingProvider()
 tp = TelegramProvider(token=settings.telegram_bot_token)

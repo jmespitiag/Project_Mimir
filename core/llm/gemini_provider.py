@@ -8,18 +8,17 @@ class GeminiProvider(LLMProvider):
     """
     name: str = "gemini"
 
-    def __init__(self, model: str = "gemini-2.0-flash") -> None:
+    def __init__(self, model: str = "gemini-2.0-flash", api_key: str = "") -> None:
         self.model = model
+        self.api_key = api_key or os.environ.get("GOOGLE_API_KEY", "")
 
     def complete(self, system: str, context: str, tools: list[dict]) -> LLMResponse:
-        api_key = os.environ.get("GOOGLE_API_KEY", "")
-        if not api_key:
+        if not self.api_key:
             return LLMResponse(text="Gemini no configurado: falta GOOGLE_API_KEY. Uso MockProvider.")
         try:
             import google.generativeai as genai
-            genai.configure(api_key=api_key)
+            genai.configure(api_key=self.api_key)
             m = genai.GenerativeModel(self.model)
-            # Solo system + contexto relevante, nunca memoria completa ni secretos
             r = m.generate_content(f"{system}\n\n{context}")
             return LLMResponse(text=r.text or "")
         except Exception as e:

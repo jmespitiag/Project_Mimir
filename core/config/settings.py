@@ -1,6 +1,9 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import model_validator
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env', extra='ignore')
+
     env: str = 'local'
     log_level: str = 'INFO'
     llm_provider: str = 'mock'
@@ -15,3 +18,9 @@ class Settings(BaseSettings):
     owner_id: str = 'owner'
     local_api_key: str = ''
     telegram_bot_token: str = ''
+
+    @model_validator(mode='after')
+    def auto_llm_provider(self):
+        if self.google_api_key and self.llm_provider == 'mock':
+            self.llm_provider = 'gemini'
+        return self
