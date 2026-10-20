@@ -4,7 +4,7 @@ import json
 import pathlib
 import urllib.parse
 
-SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
+SCOPES = ['https://www.googleapis.com/auth/calendar.readonly', 'https://www.googleapis.com/auth/calendar.events']
 SECRETS_DIR = pathlib.Path('.secrets')
 TOKEN_PATH = SECRETS_DIR / 'calendar_token.json'
 

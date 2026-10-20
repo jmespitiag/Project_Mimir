@@ -1,7 +1,6 @@
 import logging
 import pathlib
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from core.config.settings import Settings
 from core.context.manager import Conversation, ContextManager
@@ -87,9 +86,26 @@ def google_status():
         'readwrite': bool(token_path.exists()),
         'note': 'OAuth conectado. Lectura y escritura de calendario con confirmacion. No Gmail.',
     }
+@app.get('/calendar/status')
+def calendar_status():
+    token_path = pathlib.Path('.secrets/calendar_token.json')
+    if not token_path.exists():
+        return {'configured': False, 'note': 'No hay token. Ejecuta scripts/google_oauth_calendar.py'}
+    try:
+        import json
+        data = json.loads(token_path.read_text(encoding='utf-8'))
+        scopes = data.get('scope', '')
+        return {
+            'configured': True,
+            'scopes': scopes,
+            'has_write': 'calendar.events' in scopes,
+            'note': 'Si no tiene calendar.events, re-ejecuta scripts/google_oauth_calendar.py y autoriza ambos scopes.',
+        }
+    except Exception as e:
+        return {'configured': False, 'error': str(e)}
 @app.post('/chat')
 def chat(inp: ChatIn):
-    log.info('chat sid len set')
+    log.info('chat sid=%s len=%d', inp.session_id, len(inp.message))
     conv = get_conv(inp.session_id)
     result = orch.chat(conv, inp.message)
     audit_tail = executor.audit_log[-3:]
@@ -117,90 +133,3 @@ def tasks_add(inp: TaskIn):
 @app.get('/tasks')
 def tasks_list():
     return {'tasks': task_svc.list()}
-@app.get('/', response_class=HTMLResponse)
-def chat_ui():
-    return HTMLResponse(content='''
-<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Mimir - Chat</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; height: 100vh; display: flex; flex-direction: column; }
-  header { background: #1e293b; padding: 1rem 2rem; border-bottom: 1px solid #334155; }
-  header h1 { font-size: 1.25rem; letter-spacing: 0.05em; }
-  #chat { flex: 1; overflow-y: auto; padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem; }
-  .msg { max-width: 70%; padding: 0.75rem 1rem; border-radius: 0.75rem; line-height: 1.5; }
-  .msg.user { align-self: flex-end; background: #3b82f6; color: #fff; }
-  .msg.assistant { align-self: flex-start; background: #334155; color: #e2e8f0; }
-  .msg.system { align-self: center; font-size: 0.85rem; color: #94a3b8; padding: 0.4rem 0.8rem; background: #1e293b; }
-  .confirm-box { background: #f59e0b; color: #fff; border-left: 4px solid #d97706; }
-  .confirm-box button { background: #10b981; color: #fff; border: none; padding: 0.4rem 0.8rem; margin-right: 0.5rem; border-radius: 0.375rem; cursor: pointer; }
-  .confirm-box button.reject { background: #ef4444; }
-  form { display: flex; gap: 0.5rem; padding: 1rem; background: #1e293b; border-top: 1px solid #334155; }
-  input[type="text"] { flex: 1; padding: 0.75rem 1rem; border: 1px solid #475569; border-radius: 0.5rem; background: #0f172a; color: #e2e8f0; }
-  button { padding: 0.75rem 1.5rem; background: #3b82f6; color: #fff; border: none; border-radius: 0.5rem; cursor: pointer; }
-  button:hover { background: #2563eb; }
-  small { color: #64748b; font-size: 0.8rem; }
-</style>
-</head>
-<body>
-<header><h1>Mimir Core 0.4.0</h1><small>Calendario conectado · Finanza · Tareas · Confirmaciones</small></header>
-<div id="chat"></div>
-<form id="form"><input type="text" id="input" placeholder="Escribe a Mimir…" autocomplete="off"><button type="submit">Enviar</button></form>
-<script>
-const chat = document.getElementById('chat');
-const form = document.getElementById('form');
-const input = document.getElementById('input');
-let pendingId = null;
-function addMsg(text, cls) {
-  const div = document.createElement('div');
-  div.className = 'msg ' + cls;
-  div.textContent = text;
-  chat.appendChild(div);
-  chat.scrollTop = chat.scrollHeight;
-}
-function addConfirm(id, text) {
-  const div = document.createElement('div');
-  div.className = 'msg assistant confirm-box';
-  div.innerHTML = text + '<br><button onclick="confirmReply(\'' + id + '\', true)">Aprobar</button><button onclick="confirmReply(\'' + id + '\', false)" class="reject">Rechazar</button>';
-  chat.appendChild(div);
-  chat.scrollTop = chat.scrollHeight;
-}
-async function send() {
-  const text = input.value.trim();
-  if (!text) return;
-  input.value = '';
-  addMsg(text, 'user');
-  const res = await fetch('/chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text, session_id: 'web'})});
-  const data = await res.json();
-  if (data.confirmation) {
-    pendingId = data.confirmation.id;
-    addConfirm(pendingId, data.confirmation.reason + '<br><b>Tool:</b> ' + data.confirmation.tool + '<br><b>Args:</b> ' + JSON.stringify(data.confirmation.args));
-  } else {
-    addMsg(data.reply, 'assistant');
-  }
-}
-async function confirmReply(id, approve) {
-  if (!approve) {
-    addMsg('Confirmacion rechazada.', 'system');
-    pendingId = null;
-    return;
-  }
-  const res = await fetch('/confirm/' + id, {method: 'POST'});
-  const data = await res.json();
-  if (data.ok) {
-    addMsg('Accion confirmada y ejecutada: ' + JSON.stringify(data.data), 'assistant');
-  } else {
-    addMsg('Error al ejecutar: ' + data.error, 'system');
-  }
-  pendingId = null;
-}
-form.addEventListener('submit', (e) => { e.preventDefault(); send(); });
-input.addEventListener('keypress', (e) => { if (e.key === 'Enter' && !pendingId) send(); });
-</script>
-</body>
-</html>
-''')
