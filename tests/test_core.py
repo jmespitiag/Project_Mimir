@@ -127,3 +127,46 @@ def test_calendar_update_and_delete_with_confirmation():
     ex.approve_confirmation(r3.confirmation_id)
     evs = cal_svc.list_events()
     assert not any(e['event_id'] == ev_id for e in evs)
+
+from core.messaging.mock import MockMessagingProvider
+from core.messaging.base import IncomingMessage, OutgoingMessage
+
+def test_mock_messaging_receive():
+    prov = MockMessagingProvider()
+    inc = prov.receive({'from': '+521234567890', 'text': 'hola mimir', 'provider': 'mock', 'message_id': '123'})
+    assert isinstance(inc, IncomingMessage)
+    assert inc.from_number == '+521234567890'
+    assert inc.text == 'hola mimir'
+
+def test_mock_messaging_send():
+    prov = MockMessagingProvider()
+    out = OutgoingMessage(to_number='+521234567890', text='Hola, soy Mimir')
+    assert prov.send(out) is True
+
+from core.messaging.telegram import TelegramProvider
+
+def test_telegram_not_configured_without_token():
+    prov = TelegramProvider()
+    assert prov.is_configured() is False
+
+def test_telegram_webhook_mock_flow():
+    from fastapi.testclient import TestClient
+    from apps.api.main import app
+    c = TestClient(app)
+    payload = {'message': {'message_id': 1, 'from': {'id': 123456789}, 'chat': {'id': 123456789}, 'text': 'hola mimir'}}
+    r = c.post('/telegram/webhook', json={'payload': payload})
+    assert r.status_code == 200
+    data = r.json()
+    assert data['status'] == 'ok'
+    assert data['from'] == '123456789'
+    assert 'reply' in data
+    assert data['sent_via_telegram'] is False
+
+def test_telegram_status():
+    from fastapi.testclient import TestClient
+    from apps.api.main import app
+    c = TestClient(app)
+    r = c.get('/telegram/status')
+    assert r.status_code == 200
+    data = r.json()
+    assert data['provider'] in ('mock', 'telegram')
