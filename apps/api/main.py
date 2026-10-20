@@ -122,7 +122,7 @@ def calendar_status():
 def chat(inp: ChatIn):
     log.info('chat sid=%s len=%d', inp.session_id, len(inp.message))
     conv = get_conv(inp.session_id)
-    result = orch.chat(conv, inp.message)
+    result = orch.chat(conv, inp.message, session_id=inp.session_id)
     audit_tail = executor.audit_log[-3:]
     if 'confirmation' in result:
         return {'reply': result['reply'], 'confirmation': result['confirmation'], 'audit': audit_tail}
@@ -142,7 +142,7 @@ def telegram_webhook(inp: WebhookIn):
     except Exception as e:
         return {'status': 'error', 'error': 'payload invalido: ' + str(e)}
     conv = get_conv(incoming.from_number)
-    result = orch.chat(conv, incoming.text)
+    result = orch.chat(conv, incoming.text, session_id=incoming.from_number)
     audit_tail = executor.audit_log[-3:]
     out_text = result.get('reply', 'Sin respuesta')
     if 'confirmation' in result:
