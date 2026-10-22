@@ -2,13 +2,12 @@ from __future__ import annotations
 import httpx
 from core.messaging.base import MessagingProvider, IncomingMessage, OutgoingMessage
 
-class TelegramProvider(MessagingProvider):
-    """Adapter real a Telegram Bot API.
+class BifrostTelegramProvider(MessagingProvider):
+    """Adapter real a Telegram Bot API (Bifrost).
     Solo necesita TELEGRAM_BOT_TOKEN. Falla cerrado si no hay token.
     Tu numero de telefono no se expone.
     """
-
-    name: str = "telegram"
+    name: str = "bifrost_telegram"
 
     def __init__(self, token: str = "") -> None:
         self.token = token
@@ -23,13 +22,13 @@ class TelegramProvider(MessagingProvider):
         return IncomingMessage(
             from_number=str(chat.get("id", "")),
             text=msg.get("text", ""),
-            provider="telegram",
+            provider="bifrost_telegram",
             message_id=str(msg.get("message_id", "")),
         )
 
     def send(self, msg: OutgoingMessage) -> bool:
         if not self.is_configured():
-            raise RuntimeError("Telegram no configurado. Falta TELEGRAM_BOT_TOKEN.")
+            raise RuntimeError("Bifrost no configurado. Falta TELEGRAM_BOT_TOKEN.")
         url = self.base_url + "/sendMessage"
         body = {"chat_id": msg.to_number, "text": msg.text}
         try:

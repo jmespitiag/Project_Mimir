@@ -11,10 +11,30 @@ class CalendarGetEvents(Tool):
 class CalendarCreateEvent(Tool):
     _svc: object = PrivateAttr()
     def __init__(self, svc, **kw) -> None:
-        super().__init__(name='calendar_create_event', description='Crear evento de calendario (Freyja). Requiere confirmacion del usuario.', risk_level=RiskLevel.HIGH, input_schema={'required': ['title', 'start']}, concept='Freyja', required_permissions=['calendar.write'], **kw)
+        super().__init__(
+            name='calendar_create_event',
+            description='Crear evento de calendario (Freyja). Requiere confirmacion del usuario.',
+            risk_level=RiskLevel.HIGH,
+            input_schema={
+                'required': ['title', 'start'],
+                'properties': {
+                    'title': {'type': 'string'},
+                    'start': {'type': 'string'},
+                    'end': {'type': 'string'},
+                    'reminders': {
+                        'type': 'array',
+                        'items': {'type': 'string', 'enum': ['3_days_before', '1_day_before', 'on_the_day']}
+                    }
+                }
+            },
+            concept='Freyja',
+            required_permissions=['calendar.write'],
+            **kw
+        )
         self._svc = svc
+    
     def run(self, args: dict) -> ToolResult:
-        return ToolResult(ok=True, data=self._svc.create_event(args['title'], args['start']))
+        return ToolResult(ok=True, data=self._svc.create_event(args['title'], args['start'], args.get('end', ''), args.get('reminders')))
 class CalendarUpdateEvent(Tool):
     _svc: object = PrivateAttr()
     def __init__(self, svc, **kw) -> None:

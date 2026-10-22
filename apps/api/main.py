@@ -22,7 +22,7 @@ from core.llm.gemini_provider import GeminiProvider
 from core.orchestration.orchestrator import MimirOrchestrator
 from core.events.bus import EventBus
 from core.messaging.mock import MockMessagingProvider
-from core.messaging.telegram import TelegramProvider
+from core.messaging.telegram import BifrostTelegramProvider
 from core.messaging.base import IncomingMessage, OutgoingMessage
 try:
     from infrastructure.google.calendar_adapter import GoogleCalendarAdapter
@@ -67,12 +67,12 @@ def _llm():
     return GeminiProvider(model=settings.gemini_model, api_key=settings.google_api_key) if settings.llm_provider == 'gemini' else MockProvider()
 orch = MimirOrchestrator(_llm(), registry, executor, memory, ctx, max_steps=settings.max_tool_steps)
 msg_provider = MockMessagingProvider()
-tp = TelegramProvider(token=settings.telegram_bot_token)
+tp = BifrostTelegramProvider(token=settings.telegram_bot_token)
 if tp.is_configured():
     msg_provider = tp
-    log.info('Telegram provider real activado')
+    log.info('Bifrost provider real activado')
 else:
-    log.info('Telegram no configurado (falta TELEGRAM_BOT_TOKEN). Usando mock.')
+    log.info('Bifrost no configurado (falta TELEGRAM_BOT_TOKEN). Usando mock.')
 sessions: dict[str, Conversation] = {}
 def get_conv(sid: str) -> Conversation:
     if sid not in sessions:
@@ -105,7 +105,7 @@ def is_google_calendar() -> bool:
     return GoogleCalendarAdapter is not None and isinstance(cal_svc, GoogleCalendarAdapter)
 @app.get('/health')
 def health():
-    return {'status': 'ok', 'core': 'mimir-0.5.0', 'tools': registry.names(), 'provider': _llm().name, 'db': settings.database_url.split('://')[0], 'calendar': 'google' if is_google_calendar() else 'mock', 'messaging': msg_provider.name, 'finance': 'draupnir'}
+    return {'status': 'ok', 'core': 'mimir-2.0.0', 'tools': registry.names(), 'provider': _llm().name, 'db': settings.database_url.split('://')[0], 'calendar': 'google' if is_google_calendar() else 'mock', 'messaging': 'bifrost', 'finance': 'draupnir'}
 @app.get('/tools')
 def tools():
     return {'tools': registry.definitions_for_llm()}
@@ -151,8 +151,8 @@ def chat(inp: ChatIn):
 def confirm(confirmation_id: str):
     result = executor.approve_confirmation(confirmation_id)
     return {'ok': result.ok, 'data': result.data, 'error': result.error}
-@app.post('/telegram/webhook')
-def telegram_webhook(inp: WebhookIn):
+@app.post('/bifrost/webhook')
+def bifrost_webhook(inp: WebhookIn):
     try:
         incoming = msg_provider.receive(inp.model_dump())
     except Exception as e:
@@ -165,31 +165,31 @@ def telegram_webhook(inp: WebhookIn):
         cid = result['confirmation']['id']
         out_text += '\n\nEsta accion requiere confirmacion. Responde con: confirmar ' + cid
     sent = False
-    if msg_provider.name == 'telegram':
+    if msg_provider.name == 'bifrost_telegram':
         try:
             sent = msg_provider.send(OutgoingMessage(to_number=incoming.from_number, text=out_text))
         except Exception as e:
-            log.warning('No se pudo enviar por Telegram: ' + str(e))
+            log.warning('No se pudo enviar por Bifrost: ' + str(e))
     return {
         'status': 'ok',
         'from': incoming.from_number,
         'message_id': incoming.message_id,
         'reply': out_text,
-        'sent_via_telegram': sent,
+        'sent_via_bifrost': sent,
         'confirmation': result.get('confirmation'),
         'audit': audit_tail,
     }
-@app.get('/telegram/status')
-def telegram_status():
+@app.get('/bifrost/status')
+def bifrost_status():
     return {
         'provider': msg_provider.name,
-        'configured': bool(msg_provider.name == 'telegram' and getattr(msg_provider, 'is_configured', lambda: False)()),
-        'note': 'Telegram mock activo. Para usar Telegram real, configura TELEGRAM_BOT_TOKEN y pon el webhook en /telegram/set-webhook.',
+        'configured': bool(msg_provider.name == 'bifrost_telegram' and getattr(msg_provider, 'is_configured', lambda: False)()),
+        'note': 'Bifrost mock activo. Para usar Telegram real, configura TELEGRAM_BOT_TOKEN y pon el webhook en /bifrost/set-webhook.',
     }
-@app.post('/telegram/set-webhook')
-def set_telegram_webhook(url: str):
-    if msg_provider.name != 'telegram':
-        return {'ok': False, 'error': 'Telegram no configurado'}
+@app.post('/bifrost/set-webhook')
+def set_bifrost_webhook(url: str):
+    if msg_provider.name != 'bifrost_telegram':
+        return {'ok': False, 'error': 'Bifrost no configurado'}
     result = msg_provider.set_webhook(url)
     return {'ok': result, 'url': url}
 # ── Draupnir: Finanzas ────────────────────────────────────────────────

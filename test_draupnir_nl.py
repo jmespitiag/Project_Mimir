@@ -47,11 +47,15 @@ tests = [
     'muestra mis gastos',
     'muestra mis ingresos',
     'que categorias tengo',
+    'crea un evento llamado Reunion manana a las 10 con recordatorio 3 dias antes',
 ]
 
 for msg in tests:
     conv = Conversation()
     out = orch.chat(conv, msg)
+    reply = str(out.get('reply', out))
+    # Remove emojis for Windows console
+    safe_reply = reply.encode('ascii', 'ignore').decode('ascii')
     print('>>> ' + msg)
-    print('<<< ' + str(out.get('reply', out))[:300])
+    print('<<< ' + safe_reply[:300])
     print('---')

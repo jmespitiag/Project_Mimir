@@ -199,30 +199,30 @@ def test_mock_messaging_send():
     out = OutgoingMessage(to_number='+521234567890', text='Hola, soy Mimir')
     assert prov.send(out) is True
 
-from core.messaging.telegram import TelegramProvider
+from core.messaging.telegram import BifrostTelegramProvider
 
-def test_telegram_not_configured_without_token():
-    prov = TelegramProvider()
+def test_bifrost_not_configured_without_token():
+    prov = BifrostTelegramProvider()
     assert prov.is_configured() is False
 
-def test_telegram_webhook_mock_flow():
+def test_bifrost_webhook_mock_flow():
     from fastapi.testclient import TestClient
     from apps.api.main import app
     c = TestClient(app)
     payload = {'update_id': 1, 'message': {'message_id': 1, 'from': {'id': 123456789}, 'chat': {'id': 123456789}, 'text': 'hola mimir'}}
-    r = c.post('/telegram/webhook', json=payload)
+    r = c.post('/bifrost/webhook', json=payload)
     assert r.status_code == 200
     data = r.json()
     assert data['status'] == 'ok'
     assert data['from'] == '123456789'
     assert 'reply' in data
-    assert data['sent_via_telegram'] is False
+    assert data['sent_via_bifrost'] is False
 
-def test_telegram_status():
+def test_bifrost_status():
     from fastapi.testclient import TestClient
     from apps.api.main import app
     c = TestClient(app)
-    r = c.get('/telegram/status')
+    r = c.get('/bifrost/status')
     assert r.status_code == 200
     data = r.json()
-    assert data['provider'] in ('mock', 'telegram')
+    assert data['provider'] in ('mock', 'bifrost_telegram')

@@ -1,2 +1,2 @@
 from core.messaging.mock import MockMessagingProvider
-from core.messaging.telegram import TelegramProvider
+from core.messaging.telegram import BifrostTelegramProvider
