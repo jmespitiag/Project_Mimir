@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     env: str = 'local'
     log_level: str = 'INFO'
     llm_provider: str = 'mock'
-    gemini_model: str = 'gemini-2.0-flash'
+    gemini_model: str = 'gemini-1.5-flash'
     google_api_key: str = ''
     google_oauth_client_id: str = ''
     google_oauth_client_secret: str = ''
