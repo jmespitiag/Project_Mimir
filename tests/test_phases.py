@@ -5,7 +5,6 @@ from core.tools.executor import ToolExecutor
 from core.policy.base import HeimdallBasicPolicy
 from modules.finance.service import FinanceService
 from modules.productivity.tasks.service import MockTaskService
-from core.tools.domain_tools import FinanceTotal, TasksAdd
 from infrastructure.google.oauth import NeedsGoogleAuth
 from infrastructure.google.calendar_adapter import GoogleCalendarAdapter
 def test_finance_sql_deterministic(tmp_path):
@@ -14,8 +13,9 @@ def test_finance_sql_deterministic(tmp_path):
     svc.add_expense(5, 'food')
     svc.add_expense(7, 'food')
     svc.add_expense(10, 'transport')
-    assert svc.total() == 22.0
-    by = {x['category']: x['total'] for x in svc.totals_by_category()}
+    summary = svc.summary()
+    assert summary['total_expense'] == 22.0
+    by = {x['category']: x['total'] for x in svc.expenses_by_category()}
     assert by['food'] == 12.0 and by['transport'] == 10.0
 def test_tasks_mock():
     svc = MockTaskService()
@@ -44,13 +44,9 @@ def test_google_adapter_state():
         except NeedsGoogleAuth:
             assert True
     else:
-        # Con token real, el adapter carga credenciales.
-        # El token puede carecer del scope de escritura (calendar.events) si se genero antes;
-        # en ese caso hay que re-ejecutar scripts/google_oauth_calendar.py para obtenerlo.
         try:
             ad = GoogleCalendarAdapter()
             evs = ad.list_events()
             assert isinstance(evs, list)
         except RefreshError:
-            # Scope insuficiente: el token solo tiene lectura. No es un fallo de codigo.
             assert True
